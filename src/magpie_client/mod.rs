@@ -34,7 +34,7 @@ use crate::application::{BASE_INTERVAL, INTERVAL_STEP};
 
 pub use client::{
     App, Battery, Client, Connection, Cpu, Disk, DiskKind, ErrorEjectFailed, Fan, Gpu, Memory,
-    MemoryDevice, Process, Service, SmartData,
+    MemoryDevice, Process, ScriptName, ScriptRunResult, ScriptStatus, Service, SmartData,
 };
 use magpie_types::about::About;
 
@@ -104,8 +104,7 @@ enum Message {
     SmartData(String),
     AboutSystem,
     ScriptName,
-    ScriptRun,
-    ScriptRunRevert,
+    ScriptRun(bool),
     ScriptOpen,
 }
 
@@ -115,7 +114,7 @@ enum Response {
     SmartData(Option<SmartData>),
     AboutResult(About),
     ScriptResult(Result<(), String>),
-    ScriptNameResult(Option<(String, String)>),
+    ScriptNameResult(Result<ScriptName, String>),
 }
 
 #[derive(Debug)]
@@ -603,17 +602,13 @@ impl MagpieClient {
         }
     }
 
-    pub fn setup_script_name(&self) -> Option<(String, String)> {
-        match self.sender.send(Message::ScriptName) {
-            Err(e) => {
-                g_critical!(
-                    "MissionCenter::Application",
-                    "Error sending ScriptName to gatherer: {e}",
-                );
-
-                return None;
-            }
-            _ => {}
+    pub fn setup_script_name(&self) -> Result<ScriptName, String> {
+        if let Err(e) = self.sender.send(Message::ScriptName) {
+            g_critical!(
+                "MissionCenter::Application",
+                "Error sending ScriptName to gatherer: {e}",
+            );
+            return Err("Error sending ScriptName to gatherer".to_string());
         }
 
         match self.receiver.recv() {
@@ -623,80 +618,27 @@ impl MagpieClient {
                     "MissionCenter::Application",
                     "Error receiving ScriptName response: {e}",
                 );
-                None
+                Err("Error receiving ScriptName response".to_string())
             }
             _ => {
                 g_critical!(
                     "MissionCenter::Application",
                     "Error receiving ScriptName response. Wrong type"
                 );
-                None
+                Err("Error receiving ScriptName response. Wrong type".to_string())
             }
         }
     }
 
-    pub fn setup_script_run(&self) -> Result<(), String> {
-        match self.sender.send(Message::ScriptRun) {
-            Err(e) => {
-                g_critical!(
-                    "MissionCenter::Application",
-                    "Error sending ScriptRun to gatherer: {e}",
-                );
-
-                return Err("Error sending ScriptRun to gatherer".to_string());
-            }
-            _ => {}
-        }
-
-        match self.receiver.recv() {
-            Ok(Response::ScriptResult(v)) => v,
-            Err(e) => {
-                g_critical!(
-                    "MissionCenter::Application",
-                    "Error receiving ScriptRun response: {e}",
-                );
-                Err("Error receiving ScriptRun to gatherer".to_string())
-            }
-            _ => {
-                g_critical!(
-                    "MissionCenter::Application",
-                    "Error receiving ScriptRun response. Wrong type"
-                );
-                Err("Error receiving ScriptRun to gatherer. Wrong type".to_string())
-            }
-        }
-    }
-
-    pub fn setup_script_run_revert(&self) -> Result<(), String> {
-        match self.sender.send(Message::ScriptRunRevert) {
-            Err(e) => {
-                g_critical!(
-                    "MissionCenter::Application",
-                    "Error sending ScriptRunRevert to gatherer: {e}",
-                );
-
-                return Err("Error sending ScriptRunRevert to gatherer".to_string());
-            }
-            _ => {}
-        }
-
-        match self.receiver.recv() {
-            Ok(Response::ScriptResult(v)) => v,
-            Err(e) => {
-                g_critical!(
-                    "MissionCenter::Application",
-                    "Error receiving ScriptRunRevert response: {e}",
-                );
-                Err("Error receiving ScriptRunRevert to gatherer".to_string())
-            }
-            _ => {
-                g_critical!(
-                    "MissionCenter::Application",
-                    "Error receiving ScriptRunRevert response. Wrong type"
-                );
-                Err("Error receiving ScriptRunRevert to gatherer. Wrong type".to_string())
-            }
-        }
+    /// The result arrives in `MissionCenterApplication::setup_script_finished`.
+    pub fn setup_script_run(&self, revert: bool) -> Result<(), String> {
+        self.sender.send(Message::ScriptRun(revert)).map_err(|e| {
+            g_critical!(
+                "MissionCenter::Application",
+                "Error sending ScriptRun to gatherer: {e}",
+            );
+            "Error sending ScriptRun to gatherer".to_string()
+        })
     }
 
     pub fn setup_script_open(&self) -> Result<(), String> {
@@ -738,6 +680,7 @@ impl MagpieClient {
         rx: &mut Receiver<Message>,
         tx: &mut Sender<Response>,
         timeout: Duration,
+        pending_script: &mut Option<bool>,
     ) -> bool {
         match rx.recv_timeout(timeout) {
             Ok(message) => match message {
@@ -826,7 +769,7 @@ impl MagpieClient {
                     }
                 }
                 Message::ScriptName => {
-                    if let Err(e) = tx.send(Response::ScriptNameResult(magpie.setup_script_name()))
+                    if let Err(e) = tx.send(Response::ScriptNameResult(magpie.setup_script_info()))
                     {
                         g_critical!(
                             "MissionCenter::SysInfo",
@@ -835,26 +778,16 @@ impl MagpieClient {
                         );
                     }
                 }
-                Message::ScriptRun => {
-                    if let Err(e) = tx.send(Response::ScriptResult(magpie.setup_script_run())) {
-                        g_critical!(
-                            "MissionCenter::SysInfo",
-                            "Error sending ScriptRun response: {}",
-                            e
-                        );
-                    }
+                Message::ScriptRun(revert) if pending_script.is_some() => {
+                    g_warning!(
+                        "MissionCenter::SysInfo",
+                        "Ignoring setup script request (revert: {revert}), a run is pending"
+                    );
                 }
-                Message::ScriptRunRevert => {
-                    if let Err(e) =
-                        tx.send(Response::ScriptResult(magpie.setup_script_run_revert()))
-                    {
-                        g_critical!(
-                            "MissionCenter::SysInfo",
-                            "Error sending ScriptRunRevert response: {}",
-                            e
-                        );
-                    }
-                }
+                Message::ScriptRun(revert) => match magpie.setup_script_start(revert) {
+                    Ok(()) => *pending_script = Some(revert),
+                    Err(e) => Self::deliver_script_result(revert, ScriptRunResult::Err(e)),
+                },
                 Message::ScriptOpen => {
                     if let Err(e) = tx.send(Response::ScriptResult(magpie.setup_script_open())) {
                         g_critical!(
@@ -868,7 +801,30 @@ impl MagpieClient {
             Err(_) => {}
         }
 
+        if let Some(revert) = *pending_script {
+            match magpie.setup_script_status() {
+                Some(ScriptStatus::Running) | None => {}
+                Some(ScriptStatus::Idle) => {
+                    *pending_script = None;
+                    Self::deliver_script_result(
+                        revert,
+                        ScriptRunResult::Err(
+                            "Magpie restarted while the setup script was running".to_string(),
+                        ),
+                    );
+                }
+                Some(ScriptStatus::Finished(result)) => {
+                    *pending_script = None;
+                    Self::deliver_script_result(revert, result);
+                }
+            }
+        }
+
         true
+    }
+
+    fn deliver_script_result(revert: bool, result: ScriptRunResult) {
+        idle_add_once(move || app!().setup_script_finished(revert, result));
     }
 
     fn gather_and_proxy(
@@ -955,6 +911,7 @@ impl MagpieClient {
             }
         }
 
+        let mut pending_script = None;
         'read_loop: while running.load(atomic::Ordering::Acquire) {
             let loop_start = std::time::Instant::now();
 
@@ -1132,7 +1089,13 @@ impl MagpieClient {
             for _ in 0..ITERATIONS_COUNT {
                 let wait_timer = std::time::Instant::now();
 
-                if !Self::handle_incoming_message(&magpie, &mut rx, &mut tx, wait_time_fraction) {
+                if !Self::handle_incoming_message(
+                    &magpie,
+                    &mut rx,
+                    &mut tx,
+                    wait_time_fraction,
+                    &mut pending_script,
+                ) {
                     break 'read_loop;
                 }
 
@@ -1146,7 +1109,13 @@ impl MagpieClient {
                 }
             }
 
-            if !Self::handle_incoming_message(&magpie, &mut rx, &mut tx, wait_time) {
+            if !Self::handle_incoming_message(
+                &magpie,
+                &mut rx,
+                &mut tx,
+                wait_time,
+                &mut pending_script,
+            ) {
                 break 'read_loop;
             }
 

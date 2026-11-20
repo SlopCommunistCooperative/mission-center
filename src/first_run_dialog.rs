@@ -18,17 +18,26 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+use std::cell::{Cell, OnceCell};
+
 use adw::prelude::AdwDialogExt;
 use adw::subclass::prelude::*;
 
-use gtk::prelude::{ActionGroupExt, ActionMapExt, ButtonExt, DisplayExt, WidgetExt};
+use gtk::prelude::{ActionMapExt, ButtonExt, DisplayExt, ObjectExt, WidgetExt};
 use gtk::{
     gio,
     glib::{self, g_critical, g_warning},
     AlertDialog,
 };
 
-use crate::{app, i18n};
+use crate::i18n::{i18n, i18n_f};
+use crate::magpie_client::{ScriptName, ScriptRunResult};
+use crate::{app, is_snap, MissionCenterWindow};
+
+thread_local! {
+    static ACTIVE_DIALOG: glib::WeakRef<FirstRunDialog> = glib::WeakRef::new();
+    static SCRIPT_RUNNING: Cell<bool> = const { Cell::new(false) };
+}
 
 mod imp {
     use super::*;
@@ -40,6 +49,14 @@ mod imp {
         pub close: TemplateChild<gtk::Button>,
         #[template_child]
         pub run_script: TemplateChild<adw::SplitButton>,
+        #[template_child]
+        pub spinner: TemplateChild<adw::Spinner>,
+        #[template_child]
+        pub rapl_warning: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub notice: TemplateChild<gtk::Label>,
+
+        pub run_actions: OnceCell<[gio::SimpleAction; 2]>,
     }
 
     #[glib::object_subclass]
@@ -88,9 +105,11 @@ impl FirstRunDialog {
 
         let imp = this.imp();
 
-        let dialog = this.clone();
+        let dialog = this.downgrade();
         imp.close.connect_clicked(move |_| {
-            dialog.close();
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.close();
+            }
         });
 
         this.connect_map(|dialog| {
@@ -101,181 +120,253 @@ impl FirstRunDialog {
 
         this
     }
+
     pub fn run() {
         let app = app!();
 
         let Some(window) = app.window() else {
             g_critical!(
-                "MissionCenter::Application",
-                "No active window, when trying to show about dialog"
+                "MissionCenter::FirstRunDialog",
+                "No active window, when trying to show the first run dialog"
             );
             return;
         };
-        let Ok(magpie) = app.sys_info() else {
-            g_warning!("MissionCenter::Application", "Failed to get magpie client");
-            return;
-        };
+
         let dialog = Self::new();
 
-        if let Some((file, elevation_command)) = magpie.setup_script_name() {
-            let app_clone = app.clone();
-            let window_clone = window.clone();
-            let file_clone = file.clone();
+        if is_snap() {
+            dialog.show_notice(&i18n(
+                "Mission Center is installed as a Snap package, which runs in a sandbox that \
+                 can't change system settings. Per-process network usage is unavailable in the \
+                 Snap package. The wiki describes how to enable CPU power draw and fan readings \
+                 on the host.",
+            ));
+        } else {
+            let script = match app.sys_info() {
+                Ok(magpie) => magpie.setup_script_name(),
+                Err(_) => Err("Failed to get magpie client".to_owned()),
+            };
 
-            let action = gio::SimpleAction::new("view_script", None);
-            app.add_action(&action);
-
-            action.connect_activate(move |_, _| {
-                let Ok(magpie) = app_clone.sys_info() else {
-                    g_warning!("MissionCenter::Application", "Failed to get magpie client");
-                    return;
-                };
-
-                if let Err(output) = magpie.setup_script_open() {
-                    let error_dialog = AlertDialog::builder()
-                        .modal(true)
-                        .message(&i18n("Failed to Open Script"))
-                        .detail(&format!("{}:\n{}", &file_clone, &output,))
-                        .default_button(1)
-                        .buttons([i18n("Copy File Location"), i18n("Close")])
-                        .build();
-
-                    let display = gtk::prelude::WidgetExt::display(&window_clone);
-
-                    error_dialog.choose(
-                        Some(&window_clone),
-                        None::<&gtk::gio::Cancellable>,
-                        move |response| match response {
-                            Ok(0) => display.clipboard().set_text(&output),
-                            _ => (),
-                        },
+            match script {
+                Ok(script) => dialog.add_script_actions(script),
+                Err(e) => {
+                    g_warning!(
+                        "MissionCenter::FirstRunDialog",
+                        "The setup script is unavailable: {e}"
                     );
+                    dialog.show_notice(&i18n_f("The additional setup is unavailable: {}", &[&e]));
                 }
-            });
-
-            let app_clone = app.clone();
-            let window_clone = window.clone();
-            let dialog_clone = dialog.clone();
-            let action = gio::SimpleAction::new("run_script", None);
-            app.add_action(&action);
-
-            action.connect_activate(move |_, _| {
-                let Ok(magpie) = app_clone.sys_info() else {
-                    g_warning!("MissionCenter::Application", "Failed to get magpie client");
-                    return;
-                };
-
-                if let Err(message) = magpie.setup_script_run() {
-                    let error_dialog = AlertDialog::builder()
-                        .modal(true)
-                        .message(&i18n("Setup Script Failed"))
-                        .detail(&message)
-                        .buttons([i18n("Copy Output"), i18n("Retry"), i18n("Close")])
-                        .default_button(1)
-                        .build();
-
-                    let display = gtk::prelude::WidgetExt::display(&window_clone);
-                    let app_clone = app_clone.clone();
-
-                    error_dialog.choose(
-                        Some(&window_clone),
-                        None::<&gtk::gio::Cancellable>,
-                        move |response| match response {
-                            Ok(0) => display.clipboard().set_text(&message),
-                            Ok(1) => app_clone.activate_action("run_script", None),
-                            _ => (),
-                        },
-                    );
-                } else {
-                    let restart_dialog = AlertDialog::builder()
-                        .modal(true)
-                        .message(&i18n("Success!"))
-                        .detail(&i18n("Restart Mission Center to apply changes?"))
-                        .buttons([i18n("Restart"), i18n("Close")])
-                        .build();
-                    let app_clone = app_clone.clone();
-
-                    restart_dialog.choose(
-                        Some(&window_clone),
-                        None::<&gtk::gio::Cancellable>,
-                        move |response| match response {
-                            Ok(0) => app_clone.restart(),
-                            _ => (),
-                        },
-                    );
-                    dialog_clone.close();
-                };
-            });
-
-            let app_clone = app.clone();
-            let window_clone = window.clone();
-            let dialog_clone = dialog.clone();
-            let action = gio::SimpleAction::new("run_revert_script", None);
-            app.add_action(&action);
-
-            action.connect_activate(move |_, _| {
-                let Ok(magpie) = app_clone.sys_info() else {
-                    g_warning!("MissionCenter::Application", "Failed to get magpie client");
-                    return;
-                };
-
-                if let Err(message) = magpie.setup_script_run_revert() {
-                    let error_dialog = AlertDialog::builder()
-                        .modal(true)
-                        .message(&i18n("Revert Setup Script Failed"))
-                        .detail(&message)
-                        .buttons([i18n("Copy Output"), i18n("Retry"), i18n("Close")])
-                        .default_button(1)
-                        .build();
-
-                    let display = gtk::prelude::WidgetExt::display(&window_clone);
-                    let app_clone = app_clone.clone();
-
-                    error_dialog.choose(
-                        Some(&window_clone),
-                        None::<&gtk::gio::Cancellable>,
-                        move |response| match response {
-                            Ok(0) => display.clipboard().set_text(&message),
-                            Ok(1) => app_clone.activate_action("run_revert_script", None),
-                            _ => (),
-                        },
-                    );
-                } else {
-                    dialog_clone.close();
-                };
-            });
-
-            let file_clone = file.clone();
-            let elevation_command_clone = elevation_command.clone();
-            let display = gtk::prelude::WidgetExt::display(&window);
-            let action = gio::SimpleAction::new("copy_script_command", None);
-            action.connect_activate(move |_, _| {
-                display
-                    .clipboard()
-                    .set_text(&format!("{} {}", elevation_command_clone, file_clone));
-            });
-            app.add_action(&action);
-
-            let file_clone = file.clone();
-            let elevation_command_clone = elevation_command.clone();
-            let display = gtk::prelude::WidgetExt::display(&window);
-            let action = gio::SimpleAction::new("copy_revert_script_command", None);
-            action.connect_activate(move |_, _| {
-                display.clipboard().set_text(&format!(
-                    "{} {} --revert",
-                    elevation_command_clone, file_clone
-                ));
-            });
-            app.add_action(&action);
-
-            let display = gtk::prelude::WidgetExt::display(&window);
-            let action = gio::SimpleAction::new("copy_script_location", None);
-            action.connect_activate(move |_, _| {
-                display.clipboard().set_text(&file);
-            });
-            app.add_action(&action);
+            }
         }
 
+        dialog.set_busy(SCRIPT_RUNNING.get());
+        ACTIVE_DIALOG.with(|active| active.set(Some(&dialog)));
         dialog.present(Some(&window));
+    }
+
+    pub fn script_finished(revert: bool, result: ScriptRunResult) {
+        SCRIPT_RUNNING.set(false);
+
+        let dialog = Self::active();
+        if let Some(dialog) = &dialog {
+            dialog.set_busy(false);
+        }
+
+        let Some(window) = app!().window() else {
+            return;
+        };
+
+        let warning = match result {
+            ScriptRunResult::Ok => None,
+            ScriptRunResult::WithWarnings(warning) => Some(warning),
+            ScriptRunResult::Err(message) => {
+                Self::show_failure(&window, revert, message);
+                return;
+            }
+        };
+
+        if let Some(dialog) = dialog {
+            dialog.close();
+        }
+        if revert {
+            Self::show_revert_notice(&window);
+        } else {
+            Self::offer_restart(&window, warning);
+        }
+    }
+
+    fn active() -> Option<Self> {
+        ACTIVE_DIALOG.with(|active| active.upgrade())
+    }
+
+    fn add_script_actions(&self, script: ScriptName) {
+        let ScriptName {
+            file,
+            command,
+            revert_command,
+        } = script;
+
+        let group = gio::SimpleActionGroup::new();
+
+        let run = gio::SimpleAction::new("run", None);
+        run.connect_activate(|_, _| Self::start_script(false));
+        group.add_action(&run);
+
+        let revert = gio::SimpleAction::new("revert", None);
+        revert.connect_activate(|_, _| Self::start_script(true));
+        group.add_action(&revert);
+
+        let action = gio::SimpleAction::new("view", None);
+        let view_file = file.clone();
+        action.connect_activate(move |_, _| Self::view_script(&view_file));
+        group.add_action(&action);
+
+        let display = WidgetExt::display(self);
+        for (name, text) in [
+            ("copy-location", file),
+            ("copy-command", command),
+            ("copy-revert-command", revert_command),
+        ] {
+            let action = gio::SimpleAction::new(name, None);
+            let display = display.clone();
+            action.connect_activate(move |_, _| display.clipboard().set_text(&text));
+            group.add_action(&action);
+        }
+
+        self.insert_action_group("setup", Some(&group));
+        let _ = self.imp().run_actions.set([run, revert]);
+    }
+
+    fn show_notice(&self, text: &str) {
+        let imp = self.imp();
+
+        imp.notice.set_label(text);
+        imp.notice.set_visible(true);
+        imp.rapl_warning.set_visible(false);
+        imp.run_script.set_visible(false);
+        self.set_default_widget(Some(&*imp.close));
+    }
+
+    fn set_busy(&self, busy: bool) {
+        let imp = self.imp();
+
+        imp.spinner.set_visible(busy);
+        for action in imp.run_actions.get().into_iter().flatten() {
+            action.set_enabled(!busy);
+        }
+    }
+
+    fn start_script(revert: bool) {
+        if SCRIPT_RUNNING.get() {
+            return;
+        }
+
+        let started = match app!().sys_info() {
+            Ok(magpie) => magpie.setup_script_run(revert),
+            Err(_) => Err("Failed to get magpie client".to_owned()),
+        };
+
+        match started {
+            Ok(()) => {
+                SCRIPT_RUNNING.set(true);
+                if let Some(dialog) = Self::active() {
+                    dialog.set_busy(true);
+                }
+            }
+            Err(e) => Self::script_finished(revert, ScriptRunResult::Err(e)),
+        }
+    }
+
+    fn view_script(file: &str) {
+        let opened = match app!().sys_info() {
+            Ok(magpie) => magpie.setup_script_open(),
+            Err(_) => Err("Failed to get magpie client".to_owned()),
+        };
+        let Err(message) = opened else {
+            return;
+        };
+
+        let Some(window) = app!().window() else {
+            return;
+        };
+
+        let error_dialog = AlertDialog::builder()
+            .modal(true)
+            .message(i18n("Failed to Open Script"))
+            .detail(format!("{file}:\n{message}"))
+            .default_button(1)
+            .buttons([i18n("Copy File Location"), i18n("Close")])
+            .build();
+
+        let display = WidgetExt::display(&window);
+        let file = file.to_owned();
+        error_dialog.choose(Some(&window), None::<&gio::Cancellable>, move |response| {
+            if let Ok(0) = response {
+                display.clipboard().set_text(&file);
+            }
+        });
+    }
+
+    fn show_revert_notice(window: &MissionCenterWindow) {
+        AlertDialog::builder()
+            .modal(true)
+            .message(i18n("Additional Setup Reverted"))
+            .detail(i18n(
+                "Restart your computer at your earliest convenience to fully revert the changes.",
+            ))
+            .buttons([i18n("Close")])
+            .build()
+            .show(Some(window));
+    }
+
+    fn offer_restart(window: &MissionCenterWindow, warning: Option<String>) {
+        let restart = i18n("Restart Mission Center to apply changes?");
+        let (message, detail) = match warning {
+            None => (i18n("Success!"), restart),
+            Some(warning) => (
+                i18n("Setup Finished With Warnings"),
+                format!("{warning}\n\n{restart}"),
+            ),
+        };
+
+        let restart_dialog = AlertDialog::builder()
+            .modal(true)
+            .message(message)
+            .detail(detail)
+            .buttons([i18n("Restart"), i18n("Close")])
+            .build();
+
+        restart_dialog.choose(Some(window), None::<&gio::Cancellable>, |response| {
+            if let Ok(0) = response {
+                app!().restart();
+            }
+        });
+    }
+
+    fn show_failure(window: &MissionCenterWindow, revert: bool, message: String) {
+        let title = if revert {
+            i18n("Revert Setup Script Failed")
+        } else {
+            i18n("Setup Script Failed")
+        };
+
+        let error_dialog = AlertDialog::builder()
+            .modal(true)
+            .message(title)
+            .detail(&message)
+            .buttons([i18n("Copy Output"), i18n("Retry"), i18n("Close")])
+            .default_button(1)
+            .build();
+
+        let display = WidgetExt::display(window);
+        error_dialog.choose(
+            Some(window),
+            None::<&gio::Cancellable>,
+            move |response| match response {
+                Ok(0) => display.clipboard().set_text(&message),
+                Ok(1) => Self::start_script(revert),
+                _ => {}
+            },
+        );
     }
 }

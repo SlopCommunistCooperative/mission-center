@@ -44,6 +44,7 @@ resources/ui/table_view/service_action_bar.blp
 resources/ui/table_view/service_details_dialog.blp
 
 resources/ui/about_system_dialog.blp
+resources/ui/first_run_dialog.blp
 resources/ui/window.blp
 
 src/apps_page/mod.rs
@@ -106,5 +107,6 @@ src/table_view/settings.rs
 
 src/window.rs
 src/about_system_dialog.rs
+src/first_run_dialog.rs
 src/application.rs
 src/main.rs

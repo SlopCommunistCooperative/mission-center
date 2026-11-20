@@ -64,6 +64,7 @@ use magpie_types::services::services_response;
 use magpie_types::services::services_response::ServiceList;
 pub use magpie_types::services::Service;
 use magpie_types::setup_script::script_response;
+pub use magpie_types::setup_script::ScriptName;
 
 use crate::magpie_client::flatpak_app_path;
 use crate::{flatpak_data_dir, is_flatpak, show_error_dialog_and_exit};
@@ -150,6 +151,32 @@ macro_rules! parse_response_with_err {
             }
         }
     }};
+}
+
+pub enum ScriptRunResult {
+    Ok,
+    WithWarnings(String),
+    Err(String),
+}
+
+pub enum ScriptStatus {
+    Idle,
+    Running,
+    Finished(ScriptRunResult),
+}
+
+fn unexpected_script_response(response: Option<ScriptResponse>) -> String {
+    match response {
+        None => "Error receiving result from Magpie".to_owned(),
+        Some(response) => {
+            g_critical!(
+                "MissionCenter::Gatherer",
+                "Unexpected setup script response: {:?}",
+                response
+            );
+            "Unexpected response from Magpie".to_owned()
+        }
+    }
 }
 
 fn random_string<const CAP: usize>() -> ArrayString<CAP> {
@@ -1253,102 +1280,64 @@ impl Client {
         )
     }
 
-    pub fn setup_script_name(&self) -> Option<(String, String)> {
-        let mut socket = self.socket.borrow_mut();
-
-        let response = make_request(
-            ipc::req_script_name(),
-            &mut socket,
-            self.socket_addr.as_ref(),
-        )
-        .and_then(|response| response.body);
-
-        let result = parse_response_with_err!(
-            response,
-            ResponseBody::Script,
-            ScriptResponse::Name,
-            ScriptResponse::None,
-            |value| value
-        );
-
-        match result {
-            Some(Ok(v)) => Some((v.file, v.elevation_command)),
-            _ => None,
+    pub fn setup_script_info(&self) -> Result<ScriptName, String> {
+        match self.script_request(ipc::req_script_name()) {
+            Some(ScriptResponse::Name(name)) => Ok(name),
+            Some(ScriptResponse::Error(e)) => Err(e),
+            response => Err(unexpected_script_response(response)),
         }
     }
 
-    pub fn setup_script_run(&self) -> Result<(), String> {
-        let mut socket = self.socket.borrow_mut();
+    pub fn setup_script_start(&self, revert: bool) -> Result<(), String> {
+        let request = if revert {
+            ipc::req_script_run_revert()
+        } else {
+            ipc::req_script_run()
+        };
 
-        let response = make_request(
-            ipc::req_script_run(),
-            &mut socket,
-            self.socket_addr.as_ref(),
-        )
-        .and_then(|response| response.body);
-
-        let result = parse_response_with_err!(
-            response,
-            ResponseBody::Script,
-            ScriptResponse::RunSuccess,
-            ScriptResponse::Error,
-            |value| value
-        );
-
-        match result {
-            Some(Ok(_)) => Ok(()),
-            Some(Err(e)) => Err(e),
-            None => Err("Error receiving result from magpie".to_string()),
+        match self.script_request(request) {
+            Some(ScriptResponse::Running(_)) => Ok(()),
+            Some(ScriptResponse::Error(e)) => Err(e),
+            response => Err(unexpected_script_response(response)),
         }
     }
 
-    pub fn setup_script_run_revert(&self) -> Result<(), String> {
-        let mut socket = self.socket.borrow_mut();
-
-        let response = make_request(
-            ipc::req_script_run_revert(),
-            &mut socket,
-            self.socket_addr.as_ref(),
-        )
-        .and_then(|response| response.body);
-
-        let result = parse_response_with_err!(
-            response,
-            ResponseBody::Script,
-            ScriptResponse::RunSuccess,
-            ScriptResponse::Error,
-            |value| value
-        );
-
-        match result {
-            Some(Ok(_)) => Ok(()),
-            Some(Err(e)) => Err(e),
-            None => Err("Error receiving result from magpie".to_string()),
+    pub fn setup_script_status(&self) -> Option<ScriptStatus> {
+        match self.script_request(ipc::req_script_status()) {
+            // The status could not be read; should ask again.
+            Some(ScriptResponse::None(_)) => Some(ScriptStatus::Idle),
+            Some(ScriptResponse::Running(_)) => Some(ScriptStatus::Running),
+            Some(ScriptResponse::RunSuccess(_)) => {
+                Some(ScriptStatus::Finished(ScriptRunResult::Ok))
+            }
+            Some(ScriptResponse::RunWarning(warning)) => Some(ScriptStatus::Finished(
+                ScriptRunResult::WithWarnings(warning),
+            )),
+            Some(ScriptResponse::Error(e)) => Some(ScriptStatus::Finished(ScriptRunResult::Err(e))),
+            response => {
+                let _ = unexpected_script_response(response);
+                None
+            }
         }
     }
 
     pub fn setup_script_open(&self) -> Result<(), String> {
+        match self.script_request(ipc::req_script_open()) {
+            Some(ScriptResponse::RunSuccess(_)) => Ok(()),
+            Some(ScriptResponse::Error(e)) => Err(e),
+            response => Err(unexpected_script_response(response)),
+        }
+    }
+
+    fn script_request(&self, request: ipc::Request) -> Option<ScriptResponse> {
         let mut socket = self.socket.borrow_mut();
 
-        let response = make_request(
-            ipc::req_script_open(),
-            &mut socket,
-            self.socket_addr.as_ref(),
-        )
-        .and_then(|response| response.body);
-
-        let result = parse_response_with_err!(
-            response,
-            ResponseBody::Script,
-            ScriptResponse::RunSuccess,
-            ScriptResponse::Error,
-            |value| value
-        );
-
-        match result {
-            Some(Ok(_)) => Ok(()),
-            Some(Err(e)) => Err(e),
-            None => Err("Error receiving result from magpie".to_string()),
+        match make_request(request, &mut socket, self.socket_addr.as_ref())?.body {
+            Some(ResponseBody::Script(script)) => script.response,
+            body => {
+                g_critical!("MissionCenter::Gatherer", "Unexpected response: {:?}", body);
+                None
+            }
         }
     }
 }

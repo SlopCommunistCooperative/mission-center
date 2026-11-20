@@ -35,7 +35,11 @@ use magpie_types::apps::icon::Icon;
 use crate::about_system_dialog::AboutSystemDialog;
 use crate::first_run_dialog::FirstRunDialog;
 use crate::table_view::cached_icon::{decode_icon, CachedIcon, DecodedIcon, IconApply, IconState};
-use crate::{config::VERSION, i18n::i18n, magpie_client::Readings};
+use crate::{
+    config::VERSION,
+    i18n::i18n,
+    magpie_client::{Readings, ScriptRunResult},
+};
 
 pub const INTERVAL_STEP: f64 = 0.05;
 pub const BASE_INTERVAL: f64 = 1f64;
@@ -504,17 +508,22 @@ impl MissionCenterApplication {
             .activate(move |app: &Self, _, _| app.show_keyboard_shortcuts())
             .build();
         let open_wiki_action = gio::ActionEntry::builder("open-wiki")
-            .activate(move |_, _, _| {
-                gio::AppInfo::launch_default_for_uri(
+            .activate(move |app: &Self, _, _| {
+                gtk::UriLauncher::new(
                     "https://gitlab.com/mission-center-devs/mission-center/-/wikis/home",
-                    None::<&gio::AppLaunchContext>,
                 )
-                .unwrap_or_else(|_| {
-                    g_critical!(
-                        "MissionCenter::Application",
-                        "Failed to open Mission Center Wiki"
-                    );
-                });
+                .launch(
+                    app.window().as_ref(),
+                    None::<&gio::Cancellable>,
+                    |result| {
+                        if let Err(e) = result {
+                            g_critical!(
+                                "MissionCenter::Application",
+                                "Failed to open Mission Center Wiki: {e}"
+                            );
+                        }
+                    },
+                );
             })
             .build();
         let first_run_dialog_action = gio::ActionEntry::builder("first-run-dialog")
@@ -586,6 +595,10 @@ impl MissionCenterApplication {
 
     pub fn show_first_run_dialog(&self) {
         FirstRunDialog::run()
+    }
+
+    pub fn setup_script_finished(&self, revert: bool, result: ScriptRunResult) {
+        FirstRunDialog::script_finished(revert, result)
     }
 
     fn show_about(&self) {

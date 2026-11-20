@@ -1,3 +1,22 @@
+/* ui/first_run_dialog.blp
+ *
+ * Copyright 2026 Mission Center Developers
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 using Gtk 4.0;
 using Adw 1;
 
@@ -32,6 +51,26 @@ template $FirstRunDialog: Adw.Dialog {
             label: _("CPU power draw, per-process network usage and fans may require additional setup");
         }
 
+        Label rapl_warning {
+            halign: start;
+            hexpand: true;
+            xalign: 0;
+            wrap: true;
+            wrap-mode: word_char;
+            max-width-chars: 80;
+            label: _("The setup makes the CPU energy counters readable by all users, which programs can abuse as a side channel to infer sensitive data (CVE-2020-8695 and CVE-2020-12912).");
+        }
+
+        Label notice {
+            visible: false;
+            halign: start;
+            hexpand: true;
+            xalign: 0;
+            wrap: true;
+            wrap-mode: word_char;
+            max-width-chars: 80;
+        }
+
         Adw.WrapBox {
             child-spacing: 12;
             line-spacing: 12;
@@ -58,9 +97,10 @@ template $FirstRunDialog: Adw.Dialog {
 
                 Box {
                     hexpand: true;
+                    spacing: 6;
 
                     Adw.SplitButton run_script {
-                        action-name: "app.run_script";
+                        action-name: "setup.run";
                         menu-model: button_run_menu;
                         receives-default: true;
 
@@ -80,6 +120,14 @@ template $FirstRunDialog: Adw.Dialog {
                             }
                         }
                     }
+
+                    Adw.Spinner spinner {
+                        visible: false;
+
+                        accessibility {
+                            label: _("Running the additional setup");
+                        }
+                    }
                 }
 
                 Button close {
@@ -92,13 +140,13 @@ template $FirstRunDialog: Adw.Dialog {
 
 menu button_run_menu {
     section {
-        item (_("Revert Additional Setup"), "app.run_revert_script")
-        item (_("View Script"), "app.view_script")
+        item (_("Revert Additional Setup"), "setup.revert")
+        item (_("View Script"), "setup.view")
     }
 
     section {
-        item (_("Copy Script Location"), "app.copy_script_location")
-        item (_("Copy Command"), "app.copy_script_command")
-        item (_("Copy Revert Command"), "app.copy_revert_script_command")
+        item (_("Copy Script Location"), "setup.copy-location")
+        item (_("Copy Command"), "setup.copy-command")
+        item (_("Copy Revert Command"), "setup.copy-revert-command")
     }
 }

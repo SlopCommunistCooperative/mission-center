@@ -94,6 +94,11 @@ pub fn is_flatpak() -> bool {
     *IS_FLATPAK.get_or_init(|| Path::new("/.flatpak-info").exists())
 }
 
+pub fn is_snap() -> bool {
+    static IS_SNAP: OnceLock<bool> = OnceLock::new();
+    *IS_SNAP.get_or_init(|| std::env::var_os("SNAP_CONTEXT").is_some())
+}
+
 // tysm gdu
 pub fn to_long_human_readable_time(seconds: u64) -> String {
     const USEC_PER_YEAR: u64 = 60 * 60 * 6 * 1461; // ((60 * 60 * 24) as f32 * 365.25);
