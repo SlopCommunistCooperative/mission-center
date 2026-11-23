@@ -393,7 +393,7 @@ appimage-job-x86:
     VERSION_STRING: "$[[ inputs.VERSION_STRING ]]"
     APPIMAGE_NIGHTLY: "$[[ inputs.NIGHTLY ]]"
   before_script:
-    - pacman -Syy && pacman -S --noconfirm curl ca-certificates tar gzip
+    - pacman -Syyuu && pacman -S --noconfirm curl ca-certificates tar gzip
   script:
     - if [[ ! -z '$[[ inputs.PORTABLE_TARBALL ]]' ]]; then curl -LO '$[[ inputs.PORTABLE_TARBALL ]]'; fi
     - tar -C / -xf portable-x86_64.tar.gz usr
@@ -422,7 +422,7 @@ appimage-job-arm:
     VERSION_STRING: "$[[ inputs.VERSION_STRING ]]"
     APPIMAGE_NIGHTLY: "$[[ inputs.NIGHTLY ]]"
   before_script:
-    - pacman -Syy && pacman -S --noconfirm curl ca-certificates tar gzip
+    - pacman -Syyuu && pacman -S --noconfirm curl ca-certificates tar gzip
   script:
     - if [[ ! -z '$[[ inputs.PORTABLE_TARBALL ]]' ]]; then curl -LO '$[[ inputs.PORTABLE_TARBALL ]]'; fi
     - tar -C / -xf portable-aarch64.tar.gz usr
