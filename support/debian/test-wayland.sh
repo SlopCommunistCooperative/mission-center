@@ -41,15 +41,25 @@ done
 
 GDK_BACKEND=wayland GSK_RENDERER=cairo WAYLAND_DEBUG=client missioncenter > "$logdir/missioncenter.log" 2>&1 &
 app_pid=$!
-for ((i = 0; i < 150; i++)); do
-    kill -0 "$app_pid" "$mutter_pid"
-    if grep -Eq 'xdg_toplevel[.#@][0-9]+\.set_title\("Mission Center"\)' "$logdir/missioncenter.log" &&
-        grep -Eq 'wl_surface[.#@][0-9]+\.attach\(wl_buffer' "$logdir/missioncenter.log"; then
-        echo 'Mission Center rendered a window on GNOME 48 Wayland.'
-        exit 0
-    fi
-    sleep .2
-done
-echo 'Timed out waiting for the Mission Center Wayland window.' >&2
-exit 1
+wait_for_window() {
+    local title=$1
+    for ((i = 0; i < 150; i++)); do
+        kill -0 "$app_pid"
+        kill -0 "$mutter_pid"
+        if grep -Fq ".set_title(\"$title\")" "$logdir/missioncenter.log" &&
+            grep -Eq 'wl_surface[.#@][0-9]+\.attach\(wl_buffer' "$logdir/missioncenter.log"; then
+            return 0
+        fi
+        sleep .2
+    done
+    echo "Timed out waiting for the $title Wayland window." >&2
+    return 1
+}
+
+wait_for_window 'Mission Center'
+gtk_library=$(awk '$6 ~ /\/libgtk-4\.so\.1(\.|$)/ {print $6; exit}' "/proc/$app_pid/maps")
+dpkg-query -L libgtk-4-1 | grep -Fx "$gtk_library"
+gapplication action io.missioncenter.MissionCenter keyboard-shortcuts
+wait_for_window 'Keyboard Shortcuts'
+echo 'Mission Center and its shortcuts window opened on GNOME 48 Wayland using system GTK.'
 BASH

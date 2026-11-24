@@ -565,10 +565,11 @@ impl MissionCenterApplication {
         let builder =
             gtk::Builder::from_resource("/io/missioncenter/MissionCenter/ui/keyboard_shortcuts.ui");
         let dialog = builder
-            .object::<adw::ShortcutsDialog>("keyboard_shortcuts")
+            .object::<gtk::Window>("keyboard_shortcuts")
             .expect("Failed to get shortcuts window");
 
-        dialog.present(Some(&app_window));
+        dialog.set_transient_for(Some(&app_window));
+        dialog.present();
     }
 
     fn show_system_about(&self) {

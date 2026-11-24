@@ -48,7 +48,7 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install -y --no-install-recommends /packages/*.deb
-              apt-get install -y --no-install-recommends dbus-daemon libegl-mesa0 libgl1-mesa-dri mutter
+              apt-get install -y --no-install-recommends dbus-daemon libegl-mesa0 libgl1-mesa-dri libglib2.0-bin mutter
               useradd --create-home smoke
               runuser -u smoke -- bash /scripts/test-wayland.sh
             '

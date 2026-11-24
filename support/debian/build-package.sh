@@ -4,47 +4,37 @@ set -euo pipefail
 # Run as root at the checkout root in a disposable Debian 13 container.
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates dpkg-dev patchelf python3-setuptools xz-utils
+apt-get install -y --no-install-recommends \
+    blueprint-compiler build-essential ca-certificates cmake curl desktop-file-utils \
+    dpkg-dev gettext libadwaita-1-dev libdbus-1-dev libdrm-dev libgbm-dev libudev-dev \
+    meson ninja-build patch pkgconf
 
 upstream_version=$(awk -F"'" '/^[[:space:]]*version:/ { print $2; exit }' meson.build)
 version="$upstream_version+git${1:?Pass the commit timestamp and short SHA}-1"
 dpkg --validate-version "$version"
 arch=$(dpkg --print-architecture)
-multiarch=$(dpkg-architecture -qDEB_HOST_MULTIARCH)
 
 source_dir=$PWD
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-portable="$work/portable"
-SRC_PATH="$source_dir" OUT_PATH="$portable" BUILD_DIR="$work/build" \
-    LICENSE_DIR="$work/licenses" VERSION_STRING="$upstream_version" \
-    bash support/build-with-gtk-libadwaita.sh
+export RUSTUP_HOME="$work/rustup"
+export CARGO_HOME="$work/cargo"
+curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs |
+    sh -s -- --profile=minimal --default-toolchain=1.99.1 --no-modify-path -y
+export PATH="$CARGO_HOME/bin:$PATH"
 
-output="$PWD/_build/debs"
+meson setup "$work/build" --prefix=/usr --buildtype=release -Dversion="$upstream_version"
+meson compile -C "$work/build"
+
+package="$work/debian/missioncenter"
+DESTDIR="$package" meson install -C "$work/build" --no-rebuild
+strip --strip-unneeded "$package/usr/bin/missioncenter" "$package/usr/bin/missioncenter-magpie"
+install -d "$package/DEBIAN"
+install -Dm0644 "$source_dir/COPYING" "$package/usr/share/doc/missioncenter/copyright"
+
+output="$source_dir/_build/debs"
 mkdir -p "$output"
 cd "$work"
-package=debian/missioncenter
-private_dir="$package/usr/lib/missioncenter"
-install -d "$package/DEBIAN" "$private_dir/share/icons"
-cp -a "$portable/usr" "$package/"
-cp -a "$portable/dependencies/usr/share/icons/Adwaita" "$private_dir/share/icons/"
-schemas="$private_dir/share/glib-2.0/schemas"
-install -d "$schemas"
-cp "$portable/dependencies/usr/share/glib-2.0/schemas/"org.gtk.gtk4.*.gschema.xml "$schemas/"
-glib-compile-schemas --strict "$schemas"
-cp -a "$portable/dependencies/usr/lib/$multiarch/"lib*.so.[0-9]* "$private_dir/"
-
-# Keep the newer stack private, without setting LD_LIBRARY_PATH for subprocesses.
-mv "$package/usr/bin/missioncenter" "$private_dir/"
-patchelf --force-rpath --set-rpath '$ORIGIN' "$private_dir/missioncenter"
-cat > "$package/usr/bin/missioncenter" <<'EOF'
-#!/bin/sh
-export XDG_DATA_DIRS="/usr/lib/missioncenter/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-exec /usr/lib/missioncenter/missioncenter "$@"
-EOF
-chmod 0755 "$package/usr/bin/missioncenter"
-install -Dm0644 "$source_dir/COPYING" "$package/usr/share/doc/missioncenter/copyright"
-cp -a "$work/licenses" "$package/usr/share/doc/missioncenter/"
 
 cat > debian/control <<'EOF'
 Source: missioncenter
@@ -57,17 +47,7 @@ Architecture: any
 Description: GTK system resource monitor
 EOF
 
-# Teach dpkg-shlibdeps which SONAMEs this package provides, but do not advertise
-# private libraries to other Debian packages.
-elfs=("$private_dir/missioncenter" "$package/usr/bin/missioncenter-magpie")
-for library in "$private_dir/"lib*.so.[0-9]*; do
-    [[ ! -L "$library" ]] || continue
-    soname=$(patchelf --print-soname "$library")
-    printf '%s %s missioncenter\n' "${soname%%.so.*}" "${soname#*.so.}" >> "$package/DEBIAN/shlibs"
-    elfs+=("$library")
-done
-depends=$(dpkg-shlibdeps -O -xmissioncenter -l"$private_dir" "${elfs[@]}")
-rm "$package/DEBIAN/shlibs"
+depends=$(dpkg-shlibdeps -O "$package/usr/bin/missioncenter" "$package/usr/bin/missioncenter-magpie")
 
 cat > "$package/DEBIAN/control" <<EOF
 Package: missioncenter
@@ -76,7 +56,7 @@ Architecture: $arch
 Section: utils
 Priority: optional
 Maintainer: Mission Center Developers <mail@romeocalota.me>
-Depends: ${depends#shlibs:Depends=}, adwaita-icon-theme, fontconfig, hicolor-icon-theme, librsvg2-common
+Depends: ${depends#shlibs:Depends=}, librsvg2-common
 Homepage: https://missioncenter.io/
 Description: GTK system resource monitor
  Monitor CPU, memory, disk, network and GPU usage, applications and services.

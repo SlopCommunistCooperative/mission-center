@@ -4,12 +4,13 @@ Mission Center can be built natively for your host OS or packaged as an AppImage
 
 ## Debian 13 (GNOME 48 Wayland)
 
-The **Debian 13 package** GitHub Actions workflow uploads `.deb` artifacts for `amd64` and `arm64`. It installs each
-package in a fresh Debian 13 container and checks that Mission Center opens a window on headless Mutter 48, the GNOME
-Wayland compositor. The package keeps its newer GTK, GLib and libadwaita libraries private so it does not replace
-Debian's desktop libraries.
+The **Debian 13 package** GitHub Actions workflow builds and uploads `.deb` artifacts for `amd64` and `arm64`. The
+packages use Debian's GTK 4, GLib and libadwaita, with no private toolkit copies. A compatible replacement for Debian's
+`libgtk-4-1` package is used automatically if it is installed. CI verifies the installed GTK library and opens both the
+main and keyboard shortcuts windows under headless Mutter 48, the GNOME Wayland compositor.
 
-Download and extract the Actions artifact for your architecture (`dpkg --print-architecture`), then install it:
+Download the `.deb` for your architecture (`dpkg --print-architecture`) from [GitHub Releases](https://github.com/yeyebbc/mission-center/releases/latest)
+or extract it from an Actions artifact, then install it:
 
 ```bash
 sudo apt install ./missioncenter_*_$(dpkg --print-architecture).deb
@@ -34,27 +35,24 @@ The `.deb` is written to `_build/debs/`.
 | Rust                       |                     |            1.96 |
 | CMake                      |                     |            3.15 |
 | Python3                    |                     |            3.10 |
-| Blueprint Compiler         |                     |          0.19.0 |
+| Blueprint Compiler         |                     |          0.16.0 |
 | patch                      | Used to patch NVTOP |             N/A |
 | DRM development libraries  |                     |             N/A |
 | GBM development libraries  |                     |             N/A |
 | udev development libraries |                     |             N/A |
-| GLib                       |                     |            2.88 |
-| GTK 4                      |                     |            4.22 |
-| libadwaita                 |                     |             1.9 |
+| GLib                       |                     |            2.84 |
+| GTK 4                      |                     |            4.18 |
+| libadwaita                 |                     |             1.7 |
 
 **Build instructions**
-
-Note: A native build requires, at least, GLib 2.88, GTK 4.22 and libadwaita 1.9. That means ArchLinux >= 20260501,
-Fedora >= 44, Ubuntu >= 26.04.
 
 ```bash
 # The build needs the Git submodules, so clone with `--recursive`
 git clone --recursive https://gitlab.com/mission-center-devs/mission-center
 cd mission-center
 
-# On Ubuntu 26.04 all dependencies, except for the Rust toolchain, can be installed with:
-sudo apt install blueprint-compiler build-essential cmake curl desktop-file-utils gettext git libadwaita-1-dev libdrm-dev libgbm-dev libudev-dev meson pkg-config
+# On Debian 13, install the native build dependencies and provide Rust separately:
+sudo apt install blueprint-compiler build-essential cmake desktop-file-utils gettext git libadwaita-1-dev libdbus-1-dev libdrm-dev libgbm-dev libudev-dev meson ninja-build patch pkgconf
 
 BUILD_ROOT="$(pwd)/build-meson-debug"
 

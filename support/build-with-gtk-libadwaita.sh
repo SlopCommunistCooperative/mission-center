@@ -15,14 +15,6 @@ export PATH="$HOME/llvm-tooling/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/local/s
 SCRIPT_RUST_VESION=1.99.1
 SCRIPT_CLANG_VERSION=23.1.4
 
-save_licenses() {
-  [[ -n ${LICENSE_DIR:-} ]] || return 0
-  local name=$1
-  shift
-  mkdir -p "$LICENSE_DIR/$name"
-  cp "$@" "$LICENSE_DIR/$name/"
-}
-
 apt-get update
 
 ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
@@ -47,8 +39,6 @@ rm -rf /usr/include/glib-2.0/
 curl -LO https://download.gnome.org/sources/glib/$GLIB_VER_MM/glib-$GLIB_VER.tar.xz
 tar xvf glib-$GLIB_VER.tar.xz
 cd glib-$GLIB_VER
-save_licenses glib COPYING
-save_licenses gvdb subprojects/gvdb/COPYING
 mkdir build && cd build
 meson setup ..                          \
     --prefix=/usr                       \
@@ -99,7 +89,6 @@ curl -LO https://downloads.sourceforge.net/freetype/freetype-$FREETYPE_VER.tar.x
 tar xvf freetype-$FREETYPE_VER.tar.xz
 cd freetype-$FREETYPE_VER
 sed -ri "s:.*(AUX_MODULES.*valid):\1:" modules.cfg
-save_licenses freetype docs/FTL.TXT docs/GPLv2.TXT LICENSE.TXT
 sed -r "s:.*(#.*SUBPIXEL_RENDERING) .*:\1:" -i include/freetype/config/ftoption.h
 CFLAGS=-O2 ./configure                    \
     --prefix=/usr                         \
@@ -118,7 +107,6 @@ CAIRO_VER=1.18.6
 curl -LO https://gitlab.freedesktop.org/cairo/cairo/-/archive/$CAIRO_VER/cairo-$CAIRO_VER.tar.bz2
 tar xvf cairo-$CAIRO_VER.tar.bz2
 cd cairo-$CAIRO_VER
-save_licenses cairo COPYING COPYING-LGPL-2.1 COPYING-MPL-1.1
 sed -e "/@prefix@/a exec_prefix=@exec_prefix@" -i util/cairo-script/cairo-script-interpreter.pc.in
 mkdir build && cd build
 meson setup ..                          \
@@ -143,7 +131,6 @@ WAYLAND_VER=$(echo $WAYLAND_VER_REL | cut -f1 -d'-')
 curl -LO https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/wayland/$WAYLAND_VER_REL/wayland_$WAYLAND_VER.orig.tar.xz
 tar xvf wayland_$WAYLAND_VER.orig.tar.xz
 cd wayland-$WAYLAND_VER
-save_licenses wayland COPYING
 mkdir build && cd build
 meson setup --prefix=/usr --libdir=/usr/lib/$(arch)-linux-gnu --buildtype=release -Ddocumentation=false ..
 ninja && ninja install && env DESTDIR="$DEPS_PATH" ninja install
@@ -173,7 +160,6 @@ rm -rf /usr/share/icons/Adwaita
 curl -LO https://download.gnome.org/sources/adwaita-icon-theme/$ADW_ICONS_VER_MM/adwaita-icon-theme-$ADW_ICONS_VER.tar.xz
 tar xvf adwaita-icon-theme-$ADW_ICONS_VER.tar.xz
 cd adwaita-icon-theme-$ADW_ICONS_VER
-save_licenses adwaita-icon-theme COPYING COPYING_CCBYSA3 COPYING_LGPL
 mkdir build && cd build
 meson setup ..                          \
     --prefix=/usr                       \
@@ -190,7 +176,6 @@ HARFBUZZ_VER=15.0.0
 curl -LO https://github.com/harfbuzz/harfbuzz/releases/download/$HARFBUZZ_VER/harfbuzz-$HARFBUZZ_VER.tar.xz
 tar xvf harfbuzz-$HARFBUZZ_VER.tar.xz
 cd harfbuzz-$HARFBUZZ_VER
-save_licenses harfbuzz COPYING
 mkdir build && cd build
 meson setup ..                          \
     --prefix=/usr                       \
@@ -221,7 +206,6 @@ FONTCONFIG_VER=2.18.3
 curl -LO https://gitlab.freedesktop.org/fontconfig/fontconfig/-/archive/$FONTCONFIG_VER/fontconfig-$FONTCONFIG_VER.tar.bz2
 tar xvf fontconfig-$FONTCONFIG_VER.tar.bz2
 cd fontconfig-$FONTCONFIG_VER
-save_licenses fontconfig COPYING
 mkdir build && cd build
 meson setup ..                          \
     --prefix=/usr                       \
@@ -242,7 +226,6 @@ PANGO_VER_MM=$(echo $PANGO_VER | cut -f1-2 -d'.')
 curl -LO https://download.gnome.org/sources/pango/$PANGO_VER_MM/pango-$PANGO_VER.tar.xz
 tar xvf pango-$PANGO_VER.tar.xz
 cd pango-$PANGO_VER
-save_licenses pango COPYING
 mkdir build && cd build
 meson setup ..                          \
     --prefix=/usr                       \
@@ -263,7 +246,6 @@ GTK_VER_MM=$(echo $GTK_VER | cut -f1-2 -d'.')
 curl -LO https://download.gnome.org/sources/gtk/$GTK_VER_MM/gtk-$GTK_VER.tar.xz
 tar xvf gtk-$GTK_VER.tar.xz
 cd gtk-$GTK_VER
-save_licenses gtk COPYING
 mkdir build && cd build
 meson setup ..                          \
     --prefix=/usr                       \
@@ -303,8 +285,6 @@ LIBADW_VER_MM=$(echo $LIBADW_VER | cut -f1-2 -d'.')
 curl -LO https://download.gnome.org/sources/libadwaita/$LIBADW_VER_MM/libadwaita-$LIBADW_VER.tar.xz
 tar xvf libadwaita-$LIBADW_VER.tar.xz
 cd libadwaita-$LIBADW_VER
-save_licenses libadwaita COPYING
-save_licenses ministream subprojects/ministream/COPYING
 # Patch for Yaru support
 for f in $SRC_PATH/support/patches/libadwaita/*.patch; do
   patch -p1 < $f
@@ -368,7 +348,7 @@ export CXX_LD=lld
 export LDFLAGS=-lgcc
 
 cd "$SRC_PATH"
-BUILD_DIR=${BUILD_DIR:-"_build-$(arch)"}
+BUILD_DIR="_build-$(arch)"
 rm -rf "$BUILD_DIR" && meson setup "$BUILD_DIR" -Dbuildtype=release -Db_lto=true -Dprefix=/usr -Dversion="$VERSION_STRING"
 ninja -C "$BUILD_DIR" && env DESTDIR="$OUT_PATH" ninja -C "$BUILD_DIR" install
 
