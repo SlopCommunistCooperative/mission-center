@@ -28,6 +28,10 @@ private_dir="$package/usr/lib/missioncenter"
 install -d "$package/DEBIAN" "$private_dir/share/icons"
 cp -a "$portable/usr" "$package/"
 cp -a "$portable/dependencies/usr/share/icons/Adwaita" "$private_dir/share/icons/"
+schemas="$private_dir/share/glib-2.0/schemas"
+install -d "$schemas"
+cp "$portable/dependencies/usr/share/glib-2.0/schemas/"org.gtk.gtk4.*.gschema.xml "$schemas/"
+glib-compile-schemas --strict "$schemas"
 cp -a "$portable/dependencies/usr/lib/$multiarch/"lib*.so.[0-9]* "$private_dir/"
 
 # Keep the newer stack private, without setting LD_LIBRARY_PATH for subprocesses.

@@ -41,7 +41,9 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install -y --no-install-recommends /packages/*.deb
-              apt-get install -y --no-install-recommends dbus-daemon fonts-dejavu-core gnome-shell libegl-mesa0
+              apt-get install -y --no-install-recommends dbus gnome-shell libegl-mesa0 libgl1-mesa-dri
+              install -d /run/dbus
+              dbus-daemon --system --fork --nopidfile
               useradd --create-home smoke
               runuser -u smoke -- bash /scripts/test-wayland.sh
             '
