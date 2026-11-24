@@ -1,0 +1,54 @@
+name: Debian 13 package
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  debian:
+    name: Debian 13 / GNOME 48 Wayland (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Build .deb on Debian 13
+        run: |
+          docker run --rm --volume "$PWD:/hostfs" --workdir /hostfs debian:13 \
+            bash support/debian/build-package.sh "$(git show -s --format=%ct).$(git rev-parse --short=12 HEAD)"
+
+      - name: Install .deb and launch on GNOME 48 Wayland
+        run: |
+          docker run --rm --volume "$PWD/_build/debs:/packages:ro" \
+            --volume "$PWD/support/debian:/scripts:ro" debian:13 bash -eux -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends /packages/*.deb
+              apt-get install -y --no-install-recommends dbus-daemon fonts-dejavu-core gnome-shell libegl-mesa0
+              useradd --create-home smoke
+              runuser -u smoke -- bash /scripts/test-wayland.sh
+            '
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: missioncenter-debian13-${{ matrix.arch }}
+          path: _build/debs/*.deb
+          if-no-files-found: error
+          compression-level: 0
