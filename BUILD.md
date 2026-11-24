@@ -4,10 +4,10 @@ Mission Center can be built natively for your host OS or packaged as an AppImage
 
 ## Debian 13 (GNOME 48 Wayland)
 
-The **Debian 13 package** GitHub Actions workflow builds `.deb` artifacts for `amd64` and `arm64`. It installs each
-package in a fresh Debian 13 container and checks that Mission Center opens a window on a headless GNOME 48 Wayland
-session before uploading the artifact. The package keeps its newer GTK, GLib and libadwaita libraries private so it
-does not replace Debian's desktop libraries.
+The **Debian 13 package** GitHub Actions workflow uploads `.deb` artifacts for `amd64` and `arm64`. It installs each
+package in a fresh Debian 13 container and checks that Mission Center opens a window on headless Mutter 48, the GNOME
+Wayland compositor. The package keeps its newer GTK, GLib and libadwaita libraries private so it does not replace
+Debian's desktop libraries.
 
 Download and extract the Actions artifact for your architecture (`dpkg --print-architecture`), then install it:
 
